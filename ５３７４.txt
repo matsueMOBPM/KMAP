@@ -1,0 +1,939 @@
+"use strict";
+const Alexa = require('alexa-sdk');
+
+// 種別
+const trash = ['燃やせる','プラスチック製容器包装','紙製容器包装','古紙・古着','金属'];
+
+const msgSyubetsu = 'は存在しません。燃やせるごみ、プラごみ、紙ごみ、古紙・古着、金属ごみの、どの収集日が知りたいですか。';
+const rptSyubetsu = '燃やせるごみ、プラごみ、紙ごみ、古紙・古着、金属ごみのどの収集日が知りたいですか。';
+
+const msgChikuN = 'お住まいの町名を教えてください。';
+const msgChikuS = 'は存在しません。お住まいの町名を教えてください。';
+const rptChiku = 'お住まいの町名を教えてください。';
+
+// 地区別収集日
+var fs = require('fs');
+var jsonfile = fs.readFileSync('./areadays.json', 'utf8');
+var areadays = JSON.parse(jsonfile);
+
+var weekStr = [ "日", "月", "火", "水", "木", "金", "土" ];
+
+var syosaiChiku = function(ChikuID) {
+
+      if (isNaN(ChikuID)) {
+      
+          if (ChikuID == 'いや' || ChikuID == '揖屋') {
+          
+              return 'いや北側と、いや南側のどちらですか。';
+          }
+          
+          if (ChikuID == '東出雲' || ChikuID == '東出雲町') {
+          
+              return '東出雲町の、すた、かみいとう、などの地区名を教えてください。';
+          }
+          
+          // 地区のインデックス
+          for (var i in areadays) {
+              if (areadays[i][0] == ChikuID) {
+                  return i;
+              }
+          };
+          
+          return 'areadays';
+      } else {
+      
+          // 東出雲
+          if (ChikuID == 400) {
+              return '東出雲町の、すた、かみいとう、などの地区名を教えてください。';
+          }
+      
+          // いや
+          if (ChikuID == 401) {
+              return 'いや北側と、いや南側のどちらですか。';
+          }
+      
+          if (ChikuID > areadays.length) {
+              return 'areadays';
+          }
+          
+          return ChikuID;
+      }
+};
+
+// 種別検索
+var idSyubetsu = function(Syubetsu) {
+      
+      // 種別のインデックス
+      for (var j in trash) {
+          if (trash[j] == Syubetsu) {
+              return (j + 1);
+          }
+      };
+      
+      return 'trash';
+}
+
+// ごみの日の曜日（セルごと）から、
+// 次のごみの日のgetTime() と 曜日のインデックスを返す
+var getGominohi = function(kaisyucell) {
+
+      var today = new Date();
+      var dayCell = kaisyucell.split(" ");
+      
+      var buff = '';
+      
+      // 今月と来月検索
+      for (var i = 0; i < 2; i++) {
+
+        var curMonth = today.getMonth() + i;
+        var curYear = today.getFullYear() + Math.floor(curMonth / 12);
+        var month = (curMonth % 12) + 1;
+        
+        //
+        for (var j in dayCell) {
+        
+          //week=0が第1週目です。
+          for (var week = 0; week < 5; week++) {
+            //4月1日を起点として第n曜日などを計算する。
+            var date = new Date(curYear, month - 1, 1);
+            var d = new Date(date);
+            
+            //
+            var weekNo = weekStr.indexOf(dayCell[j].charAt(0));
+            
+            //4月1日を基準にして曜日の差分で時間を戻し、最大５週までの増加させて毎週を表現
+            d.setTime(date.getTime() + 1000 * 60 * 60 * 24 *
+              ((7 + weekNo - date.getDay()) % 7) + week * 7 * 24 * 60 * 60 * 1000
+            );
+            
+            if (today.getTime() <= d.getTime() + 24 * 60 * 60 * 1000) {
+                buff += weekNo + '◇';
+                 // ☆
+                 return [d.getTime(), weekNo,buff];
+            }
+          }
+        }
+      }
+      return 99;
+};
+
+
+var weekMessage = function(ChikuID,SyubetsuID) {
+
+      // 地区設定
+      if (ChikuID < 400) {
+          var areadaysID = ChikuID;
+          
+      } else {
+          var areadaysID = syosaiChiku(ChikuID);
+          return areadaysID;
+      }
+      
+      // 種別
+      if (isNaN(SyubetsuID)) {
+          var trashCol = idSyubetsu(SyubetsuID);
+          
+          if (trashCol < 0 ||  trashCol > 7) {
+              return 'trash';
+          }
+          
+      } else {
+          var trashCol = parseInt(SyubetsuID) + 1;
+      }
+      
+      // areadays の曜日エリアは３列目から始まる
+      var dayCell = areadays[areadaysID - 1][trashCol];
+      
+      var result_text = '';
+      
+      // 収集は２つまで
+      var wcount = dayCell.length;
+      
+      if (dayCell[0].length == 1) {
+          if (wcount == 1) {
+               result_text += '毎週' + dayCell[0] + '曜日';
+          } else {
+               result_text += '毎週' + dayCell[0] + '曜日と' + dayCell[1] + '曜日';
+          }
+      } else {
+          if (wcount == 1) {
+          
+              result_text += '第' + dayCell[0].charAt(1) + dayCell[0].charAt(0) + '曜日';
+          } else {
+          
+              result_text += '第' + dayCell[0].charAt(1) + 'と第' + dayCell[1].charAt(1) + dayCell[0].charAt(0) + '曜日';
+          }
+      }
+      
+      var Chikuname = areadays[ChikuID - 1][1];
+      var Syubetsuname = trash[SyubetsuID - 1];
+      
+      if (SyubetsuID == 1 || SyubetsuID == 5) {
+          var message = Chikuname + 'の' + Syubetsuname + 'ごみの収集日は' + result_text + 'です。'; // 応答メッセージ文字列の作成
+      } else {
+          var message = Chikuname + 'の' + Syubetsuname + 'の収集日は' + result_text + 'です。'; // 応答メッセージ文字列の作成
+      }
+      return message;
+};
+
+var whenMessage = function(ChikuID,SyubetsuID) {
+
+      // 地区設定
+      if (ChikuID < 400) {
+          var areadaysID = ChikuID;
+          
+      } else {
+          var areadaysID = syosaiChiku(ChikuID);
+          return areadaysID;
+      }
+      
+      // 種別
+      if (isNaN(SyubetsuID)) {
+          var trashCol = idSyubetsu(SyubetsuID);
+          
+          if (trashCol < 0 ||  trashCol > 7) {
+              return 'trash';
+          }
+          
+      } else {
+          var trashCol = parseInt(SyubetsuID) + 1;
+      }
+      
+      // areadays の曜日エリアは３列目から始まる
+      var dayCell = areadays[areadaysID - 1][trashCol];
+      
+      // あと何日 trash
+      var leftDaytime = getGominohi(dayCell);
+      var today = new Date();
+      var leftDayText = "";
+      
+      // あと何日かを計算する処理です。
+      var leftDay = Math.ceil((leftDaytime[0] - today.getTime()) / (1000 * 60 * 60 * 24))
+      
+      if (leftDay == 0) {
+        leftDayText = "今日";
+      } else if (leftDay == 1) {
+        leftDayText = "明日";
+      } else if (leftDay == 2) {
+        leftDayText = "明後日"
+      } else {
+        leftDayText = leftDay + "日後";
+      }
+      
+      // ２列目のひらがな地区名で答える
+      var Chikuname = areadays[areadaysID - 1][1];
+      var Syubetsuname = trash[SyubetsuID - 1];
+      
+      var niti = "、" + weekStr[leftDaytime[1]] + "曜日です。";
+      
+      var message = Chikuname + 'の' + Syubetsuname + 'の収集日は' + leftDayText + niti; // 応答メッセージ文字列の作成
+      
+      return message;
+};
+
+
+var todayMessage = function(ChikuID) {
+
+      // 地区設定
+      if (ChikuID < 400) {
+          var areadaysID = ChikuID;
+          
+      } else {
+          var areadaysID = syosaiChiku(ChikuID);
+          return areadaysID;
+      }
+      
+      var todayCnt = 0;
+      
+      for (var tr = 0; tr < trash.length; tr++) {
+          
+          var trashCol = tr + 2;
+          // areadays の曜日エリアは３列目から始まる
+          
+          var da = areadaysID - 1;
+          
+          var dayCell = areadays[areadaysID - 1][trashCol];
+          
+          // あと何日
+          var leftDaytime = getGominohi(dayCell);
+          
+          var today = new Date();
+          var toDayText = "";
+          
+          //あと何日かを計算する処理です。
+          var leftDay = Math.ceil((leftDaytime[0] - today.getTime()) / (1000 * 60 * 60 * 24));
+          
+         // return '◇' + da + '◇' + trashCol + '◇' + dayCell + '◇' + leftDaytime[0] + '◇' + leftDaytime[1] + '◇' + leftDay;
+          
+          if (leftDay == 0) {
+          
+              if (todayCnt == 0) {
+              
+                  toDayText = trash[tr];
+              } else {
+              
+                  toDayText += 'と、' + trash[tr];
+              }
+              todayCnt++;
+          }
+      }
+            
+      if (todayCnt > 0) {
+      
+          return  '今日の' + Chikuname + 'は' + toDayText + 'の収集日です。'; // 応答メッセージ文字列の作成
+      } else {
+      
+          return  '今日は収集はありません。'; // 応答メッセージ文字列の作成
+      }
+};
+
+
+
+// Lambda関数のメイン処理
+exports.handler = function(event, context, callback) {
+  var alexa = Alexa.handler(event, context);
+  alexa.dynamoDBTableName = 'GominashiSkillTable'; // ユーザーの地区IDを保存するDynamoDBのテーブルを定義
+  // alexa.appId = process.env.APP_ID;
+  alexa.registerHandlers(handlers); // 既存のハンドラに加えてステートハンドラ(後半で定義)も登録
+  alexa.execute();
+}
+
+var handlers = {
+    // インテントに紐付かないリクエスト
+    'LaunchRequest': function () {
+    this.emit('AMAZON.HelpIntent'); // AMAZON.HelpIntentの呼び出し
+    },
+    // スキルの使い方を尋ねるインテント
+    'AMAZON.HelpIntent': function () {
+        this.emit(':tell', '種類別のごみ収集曜日を答えます。' +
+            'たとえば、ごみなしであさひまちの燃やせるごみは何曜日と聞いてください。');
+    },
+    // 終了
+    'AMAZON.StopIntent': function () {
+        this.emit(':tell', 'ごみなしを終了します。');
+            
+       // this.emit(':saveState', true);
+    },
+    
+    // キャンセル
+    'AMAZON.CancelIntent': function () {
+        this.emit(':tell', 'ごみなしをキャンセルして終了します。');
+            
+       // this.emit(':saveState', true);
+    },
+    
+    // 種別 は何曜日
+    'IWeek': function () {
+    
+          var atChikuID = this.attributes['chikuid']; // セッションアトリビュートchikuを参照
+          
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+        
+        // 地区未設定
+        //if (atChikuid === void 0 || atChikuid == undefined) {
+          if (!atChikuID) {
+        
+              // 種別が存在しない
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+            
+                  this.attributes['STATE'] = undefined;
+                  this.SetDB(undefined,undefined,12);
+                
+                  var selSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロットごみ種別を参照
+                  this.emit(':ask', selSyubetsu + msgSyubetsu, rptSyubetsu);
+                
+              } else {
+            
+                  // 地区無し　種別有り
+                  var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別IDを参照
+           
+                  this.SetDB('',stpSyubetsuID,11);
+                  this.emit(':ask', msgChikuN, rptChiku);
+              }
+          } else {
+            // 地区有り　種別無し
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+                  var selSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロットごみ種別を参照
+                
+                  this.SetDB('',undefined,12);
+                  this.emit(':ask', selSyubetsu + msgSyubetsu, rptSyubetsu);
+               
+              } else {
+                   // 地区有り　種別有り
+                   var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別を参照
+
+                   // 回答
+                   var tellmessage = weekMessage(atChikuID,stpSyubetsuID);
+                     
+                   switch (tellmessage) {
+                     case 'areadays':
+                       this.SetDB(undefined,'',11);
+                       this.emit(':ask', msgChikuN, rptChiku);
+                     
+                     case 'trash':
+                     
+                       this.SetDB('',undefined,12);
+                       var selSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロットごみ種別を参照
+                       this.emit(':ask', selSyubetsu + msgSyubetsu, rptSyubetsu);
+                     
+                     default:
+                       if (atChikuID > 299) {
+                           this.SetDB('',stpSyubetsuID,11);
+                           this.emit(':ask', tellmessage, tellmessage);
+                       } else {
+                     
+                           this.SetDB('',undefined,undefined);
+                           this.emit(':tell', tellmessage); // レスポンスの生成
+                           console.log(tellmessage);
+                       }
+                   }
+              }
+          }
+    },
+    // 地区名 + 種別 は何曜日
+    'IChikuWeek': function () {
+    
+          var slSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロット地区名を参照
+          var slChiku = this.event.request.intent.slots.SlChiku.value; // スロットごみ種別を参照
+          
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+          
+          // 地区名が存在しない
+          if (this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+          
+              // 種別が存在しない
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+                   
+                   this.SetDB(undefined,undefined,undefined);
+                   this.emit(':tell', '地区名の'+ slChiku + 'と種別の' + slSyubetsu + 'は存在しません。もう一度はじめからお願いします。'); // レスポンスの生成
+              } else {
+                   // 地区名無し　種別有り
+                   var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別を参照
+          
+                   this.SetDB(undefined,stpSyubetsuID,11);
+                   this.emit(':ask', slChiku + msgChikuS, rptChiku);
+              }
+          } else {
+          
+              var stpChikuID = this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプ地区を参照
+              
+              // 地区名有り　種別無し
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+              
+                   this.SetDB(stpChikuID,undefined,12);
+                   this.emit(':ask', slSyubetsu + msgSyubetsu, rptSyubetsu);
+                   
+              } else {
+                   // 地区名有り　種別有り
+                   var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別を参照
+                   
+                   // 回答
+                   var tellmessage = weekMessage(stpChikuID,stpSyubetsuID);
+                   
+                   switch (tellmessage) {
+                     case 'areadays':
+                     // areadays と StChiku に差異がある
+                       this.SetDB(undefined,stpSyubetsuID,11);
+                       this.emit(':ask', slChiku + msgChikuS, rptChiku);
+                   
+                     case 'trash':
+                   
+                       this.SetDB(stpChikuID,undefined,12);
+                       this.emit(':ask', slSyubetsu + msgSyubetsu, rptSyubetsu);
+                   
+                     default:
+                       if (stpChikuID > 299) {
+                           this.SetDB(stpChikuID,stpSyubetsuID,11);
+                           this.emit(':ask', tellmessage, tellmessage);
+                       } else {
+                           this.SetDB(stpChikuID,undefined,undefined);
+                           this.emit(':tell', tellmessage); // レスポンスの生成
+                           console.log(tellmessage);
+                       }
+                   }
+              }
+          }
+    },
+
+    // 種別 はいつ？
+    'IWhen': function () {
+    
+          var atChikuID = this.attributes['chikuid']; // セッションアトリビュートchikuを参照
+          
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+        
+        // 地区未設定
+        //if (atChikuid === void 0 || atChikuid == undefined) {
+          if (!atChikuID) {
+        
+              // 種別が存在しない
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+            
+                  this.attributes['STATE'] = undefined;
+                  this.SetDB(undefined,undefined,22);
+                
+                  var selSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロットごみ種別を参照
+                  this.emit(':ask', selSyubetsu + msgSyubetsu, rptSyubetsu);
+                
+              } else {
+            
+                  // 地区無し　種別有り
+                  var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別IDを参照
+            
+                  this.SetDB('',stpSyubetsuID,21);
+                  this.emit(':ask', msgChikuN, rptChiku);
+              }
+          } else {
+            // 地区有り　種別無し
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+                  var selSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロットごみ種別を参照
+                
+                  this.SetDB('',undefined,22);
+                  this.emit(':ask', selSyubetsu + msgSyubetsu, rptSyubetsu);
+              } else {
+                   // 地区有り　種別有り
+                   var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別を参照
+
+                   // 回答
+                   var tellmessage = whenMessage(atChikuID,stpSyubetsuID);
+                   
+                   switch (tellmessage) {
+                     case 'areadays':
+                       this.SetDB(undefined,'',21);
+                       this.emit(':ask', msgChikuN, rptChiku);
+             
+                     case 'trash':
+                     
+                       this.SetDB('',undefined,22);
+                       var selSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロットごみ種別を参照
+                       this.emit(':ask', selSyubetsu + msgSyubetsu, rptSyubetsu);
+                     
+                     default:
+                       if (atChikuID > 299) {
+                           this.SetDB('',stpSyubetsuID,21);
+                           this.emit(':ask', tellmessage, tellmessage);
+                       } else {
+                     
+                           this.SetDB('',undefined,undefined);
+                           this.emit(':tell', tellmessage); // レスポンスの生成
+                           console.log(tellmessage);
+                       }
+                   }
+              }
+          }
+    },
+    
+    // 地区名 + 種別 はいつ
+    'IChikuWhen': function () {
+    
+          var slSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロット地区名を参照
+          var slChiku = this.event.request.intent.slots.SlChiku.value; // スロットごみ種別を参照
+          
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+          
+          // 地区名が存在しない
+          if (this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+          
+              // 種別が存在しない
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+                   
+                   this.SetDB(undefined,undefined,undefined);
+                   this.emit(':tell', '地区名の'+ slChiku + 'と種別の' + slSyubetsu + 'は存在しません。もう一度はじめからお願いします。'); // レスポンスの生成
+              } else {
+                   // 地区名無し　種別有り
+                   var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別を参照
+                   
+                   this.SetDB(undefined,stpSyubetsuID,21);
+                   this.emit(':ask', slChiku + msgChikuS, rptChiku);
+                   
+              }
+          } else {
+          
+              var stpChikuID = this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプ地区を参照
+              
+              // 地区名有り　種別無し
+              if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+              
+                   this.SetDB(stpChikuID,undefined,22);
+                   this.emit(':ask', slSyubetsu + msgSyubetsu, rptSyubetsu);
+                   
+              } else {
+                   // 地区名有り　種別有り
+                   var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプごみ種別を参照
+                   
+                   // 回答
+                   var tellmessage = whenMessage(stpChikuID,stpSyubetsuID);
+                   
+                   switch (tellmessage) {
+                     case 'areadays':
+                     // areadays と StChiku に差異がある
+                       this.SetDB(undefined,stpSyubetsuID,21);
+                       this.emit(':ask', slChiku + msgChikuS, rptChiku);
+                   
+                     case 'trash':
+                   
+                       this.SetDB(stpChikuID,undefined,22);
+                       this.emit(':ask', slSyubetsu + msgSyubetsu, rptSyubetsu);
+                   
+                     default:
+                       if (stpChikuID > 299) {
+                           this.SetDB(stpChikuID,stpSyubetsuID,21);
+                           this.emit(':ask', tellmessage, tellmessage);
+                       } else {
+                           this.SetDB(stpChikuID,undefined,undefined);
+                           this.emit(':tell', tellmessage); // レスポンスの生成
+                           console.log(tellmessage);
+                       }
+                   }
+              }
+          }
+    },
+    
+    
+    // 地区名 + 今日は何ごみ
+    'IChikuToday': function () {
+          
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+          
+          // 地区名が存在しない
+          if (this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+          
+               this.SetDB(undefined,stpSyubetsuID,31);
+               this.emit(':ask', slChiku + msgChikuS, rptChiku);
+          } else {
+          
+               var stpChikuID = this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプ地区を参照
+               
+               // 回答
+               var tellmessage = todayMessage(stpChikuID);
+              
+               switch (tellmessage) {
+                 case 'areadays':
+                 // areadays と StChiku に差異がある
+                   this.SetDB(undefined,stpSyubetsuID,21);
+                   this.emit(':ask', slChiku + msgChikuS, rptChiku);
+               
+                 default:
+                   if (stpChikuID > 299) {
+                       this.SetDB(stpChikuID,stpSyubetsuID,21);
+                       this.emit(':ask', tellmessage, tellmessage);
+                   } else {
+                       this.SetDB(stpChikuID,undefined,undefined);
+                       this.emit(':tell', tellmessage); // レスポンスの生成
+                       console.log(tellmessage);
+                   }
+               }
+          }
+    },    
+    
+    // 今日は何ごみ？
+    'IToday': function () {
+    
+          var atChikuID = this.attributes['chikuid']; // セッションアトリビュートchikuを参照
+          
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+        
+        // 地区未設定
+        //if (atChikuid === void 0 || atChikuid == undefined) {
+          if (!atChikuID) {
+              
+              this.SetDB('',undefined,31);
+              this.emit(':ask', msgChikuN, rptChiku);
+          } else {
+            // 地区有り　種別無し
+
+               // 回答
+               var tellmessage = todayMessage(atChikuID);
+               
+               //var tellmessage = '地区：' + atChikuID + '種別' + stpSyubetsuID;
+               
+               switch (tellmessage) {
+                 case 'areadays':
+                   this.SetDB(undefined,'',31);
+                   this.emit(':ask', msgChikuN, rptChiku);
+                 
+                 default:
+                   if (atChikuID > 299) {
+                       this.SetDB('',stpSyubetsuID,31);
+                       this.emit(':ask', tellmessage, tellmessage);
+                   } else {
+                 
+                       this.SetDB('',undefined,undefined);
+                       this.emit(':tell', tellmessage); // レスポンスの生成
+                       console.log(tellmessage);
+                   }
+               }
+          }
+    },    
+    
+    // ask での地区名回答
+    'IAnsChiku': function () {
+    
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+          
+          var icd = this.attributes['icd'] + '';
+          
+          // 種別エラーで呼ばれた
+          if (icd.charAt(1) === 2) {
+
+            // 種別が存在しない
+            if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+                
+                this.SetDB(undefined,undefined,undefined);
+                var slSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロット種別を参照
+                this.emit(':tell', slSyubetsu + msgSyubetsu); // レスポンスの生成
+                    
+            } else {
+                var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプ種別IDを参照
+                var atChikuID = this.attributes['chikuid']; // セッションアトリビュートchikuを参照
+                
+                if (!atChikuID) {
+                
+                    var atIname = this.attributes['icd']
+                    
+                    this.SetDB('',stpSyubetsuID,icd.charAt(1) + '1');
+                    this.emit(':ask', msgChikuN, rptChiku);
+                } else {
+                 
+                    switch (icd.charAt(0)) {
+                        case '1':
+                            // 何曜日
+                            var tellmessage = weekMessage(stpChikuID,atSyubetsuID);
+                            break;
+                        case '2':
+                            // いつ
+                            var tellmessage = whenMessage(stpChikuID,atSyubetsuID);
+                            break;
+                        case '3':
+                            // 今日は  こないはず
+                            var tellmessage = todayMessage(stpChikuID);
+                            break;
+                            
+                        default:
+                            var tellmessage = '☆' + icd.charAt(0);
+                            break;
+                    }
+                 
+                    switch (tellmessage) {
+                      case 'areadays':
+                        // areadays と StChiku に差異がある
+                        this.SetDB(undefined,stpSyubetsuID,icd.charAt(0) + '1');
+                        this.emit(':ask', atChikuID + msgChikuS, rptChiku);
+                        
+                      case 'trash':
+                        
+                        this.SetDB('',undefined,icd.charAt(0) + '2');
+                        var slSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロット種別を参照
+                        this.emit(':ask', slSyubetsu + msgSyubetsu, rptSyubetsu);
+                    
+                      default:
+                        this.SetDB('','',undefined);
+                        this.emit(':tell', tellmessage); // レスポンスの生成
+                        console.log(tellmessage);
+                    }
+                }
+            }
+          } else {
+            // 地区名エラーで呼ばれた
+            if (this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+                
+                this.SetDB(undefined,'',undefined);
+                
+                var stChiku = this.event.request.intent.slots.SlChiku.value; // スロットごみ種別を参照
+                var message = stChiku + 'の地区名は存在しません。もう一度はじめからお願いします。' ;
+                this.emit(':tell', message); // レスポンスの生成
+                
+            } else {
+          
+                var stpChikuID = this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプ地区IDを参照
+                var atSyubetsuID = this.attributes['syubetsuid']; // セッションアトリビュートsyubetsuidを参照
+                
+                // 回答
+                switch (icd.charAt(0)) {
+                    case '1':
+                        // 何曜日
+                        var tellmessage = weekMessage(stpChikuID,atSyubetsuID);
+                        break;
+                    case '2':
+                        // いつ
+                        var tellmessage = whenMessage(stpChikuID,atSyubetsuID);
+                        break;
+                    case '3':
+                        // 今日は
+                        var tellmessage = todayMessage(stpChikuID);
+                        break;
+                        
+                    default:
+                        var tellmessage = '☆' + icd.charAt(0);
+                        break;
+                }
+                
+                switch (tellmessage) {
+                  case 'areadays':
+                    // areadays と StChiku に差異がある
+                    this.SetDB(undefined,'',icd.charAt(0) + '1');
+                    var stpChiku = this.event.request.intent.slots.SlChiku.resolutions.resolutionsPerAuthority[0].values[0].value.name; // スロットタイプ地区を参照
+                    this.emit(':ask', stpChiku + msgChikuS, rptChiku);
+                
+                  case 'trash':
+                  
+                    this.SetDB(stpChikuID,undefined,icd.charAt(0) + '2');
+                    this.emit(':ask', rptSyubetsu, rptSyubetsu);
+                
+                  default:
+                  
+                    if (stpChikuID > 299) {
+                        this.SetDB(stpChikuID,atSyubetsuID,icd.charAt(0) + '1');
+                        this.emit(':ask', tellmessage, tellmessage);
+                    } else {
+                  
+                        this.SetDB(stpChikuID,undefined,undefined);
+                        this.emit(':tell', tellmessage); // レスポンスの生成
+                        console.log(tellmessage);
+                    }
+                }
+            }
+          }
+    //   console.log(message);    
+    },
+
+    // ask での種別回答
+    'IAnsSyubetsu': function () {
+    
+          this.SetDB = function(ChikuID,SyubetsuID,ICD) {
+      
+              if (ChikuID != '') this.attributes['chikuid'] = ChikuID;
+              if (SyubetsuID != '') this.attributes['syubetsuid'] = SyubetsuID;
+              if (ICD != '')   this.attributes['icd'] = ICD; // 次のインテント名
+          };
+          
+          var icd = this.attributes['icd'] + '';
+          
+          if (icd.charAt(1) === 1) {
+
+              var stChiku = this.event.request.intent.slots.SlSyubetsu.value; // スロットごみ種別を参照
+              var atSyubetsuID = this.attributes['syubetsuid']; // セッションアトリビュートsyubetsuを参照
+              
+              // 回答
+              if (icd.charAt(0) === 1) {
+                  var tellmessage = weekMessage(stChiku,atSyubetsuID);
+              
+              } else {
+                  var tellmessage = whenMessage(stChiku,atSyubetsuID);
+              }
+              
+              switch (tellmessage) {
+                case 'areadays':
+                // areadays と StChiku に差異がある
+                  this.SetDB(undefined,'',icd.charAt(0) + '1');
+                  this.emit(':ask', stChiku + msgChikuS, rptChiku);
+            
+                case 'trash':
+                  this.SetDB(stChiku,undefined,icd.charAt(0) + '2');
+                  this.emit(':ask', rptSyubetsu, rptSyubetsu);
+            
+                default:
+                  if (isNaN(stChiku)) {
+                  //if (stpChikuID > 299) {
+                      this.SetDB(stChiku,atSyubetsuID,icd.charAt(0) + '1');
+                      this.emit(':ask', tellmessage, tellmessage);
+                      
+                  } else {
+              
+                      this.SetDB(stChiku,'',undefined);
+                      this.emit(':tell', tellmessage); // レスポンスの生成
+                      console.log(tellmessage);
+                  }
+              }
+          } else {
+            // 種別が存在しない
+            if (this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].status.code == 'ER_SUCCESS_NO_MATCH') {
+                this.SetDB('',undefined,undefined);
+                
+                var slSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロット種別を参照
+                
+                var message = slSyubetsu + 'の種別は存在しません。もう一度はじめからお願いします。' ;
+                this.emit(':tell', message); // レスポンスの生成
+                
+            } else {
+          
+                var stpSyubetsuID = this.event.request.intent.slots.SlSyubetsu.resolutions.resolutionsPerAuthority[0].values[0].value.id; // スロットタイプ種別IDを参照
+                var atChikuID = this.attributes['chikuid']; // セッションアトリビュートchikuidを参照
+                
+                if (!atChikuID) {
+                      this.SetDB('',stpSyubetsuID,icd.charAt(0) + '2');
+                      this.emit(':ask', msgChikuN, rptChiku); // ☆
+                
+                } else {
+                  
+                  // 回答
+                  if (icd.charAt(0) === 2) {
+                      var tellmessage = weekMessage(atChikuID,stpSyubetsuID);
+                  
+                  } else {
+                      var tellmessage = whenMessage(atChikuID,stpSyubetsuID);
+                  }
+          
+                  switch (tellmessage) {
+                    case 'areadays':
+                      // areadays と StChiku に差異がある
+                      this.SetDB(undefined,stpSyubetsuID,icd.charAt(0) + '1');
+                      
+                      this.emit(':ask', msgChikuN, rptChiku);
+                  
+                    case 'trash':
+                      this.SetDB('',undefined,icd.charAt(0) + '2');
+                      var slSyubetsu = this.event.request.intent.slots.SlSyubetsu.value; // スロット種別を参照
+                      this.emit(':ask', slSyubetsu + msgSyubetsu, rptSyubetsu);
+                  
+                    default:
+                      this.SetDB('',undefined,undefined);
+                      this.emit(':tell', tellmessage); // レスポンスの生成
+                      console.log(tellmessage);
+                  }
+                }
+            }
+          }
+    },    
+    // スキルの中断時にもDynamoDBへのデータ保存を実行する設定
+    // https://github.com/alexa/alexa-skills-kit-sdk-for-nodejs#making-skill-state-management-simpler
+    'SessionEndedRequest': function () {
+      this.emit(':saveState', true);
+    }
+};
+
